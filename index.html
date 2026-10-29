@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>거북목 실시간 측정</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: wide screens = camera on the left, readout column on the right (sticky). Narrow = one column. */
+:root {
+  --bg: #edf0f1;
+  --surface: #fafbfb;
+  --fg: #12222a;
+  --muted: #53666f;
+  --line: #cbd5d9;
+  --accent: #0e7c6b;
+  --accent-fg: #ffffff;
+  --ear: #d9571c;
+  --c7: #2564c9;
+  --acro: #7a4bc2;
+  --ok: #1f8a4c;
+  --warn: #b7791f;
+  --bad: #c0392b;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e171b; --surface: #152228; --fg: #e6eef1; --muted: #93a7af; --line: #2a3a41;
+    --accent: #3cc4ab; --accent-fg: #06231d; --ear: #ff8a4f; --c7: #6ea0ff; --acro: #b894ff;
+    --ok: #4cc983; --warn: #e3b04b; --bad: #ff7b6b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e171b; --surface: #152228; --fg: #e6eef1; --muted: #93a7af; --line: #2a3a41;
+  --accent: #3cc4ab; --accent-fg: #06231d; --ear: #ff8a4f; --c7: #6ea0ff; --acro: #b894ff;
+  --ok: #4cc983; --warn: #e3b04b; --bad: #ff7b6b; color-scheme: dark;
+}
+[hidden] { display: none !important; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body);
+  font-size: 15px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 40px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (min-width: 900px) {
+  .wrap { grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); align-items: start; }
+  header { grid-column: 1 / -1; }
+  .side { position: sticky; top: 16px; }
+}
+h1 { font-size: 26px; line-height: 1.25; margin: 0; font-weight: 700; text-wrap: balance; }
+.sub { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.label { font-size: 12px; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+.small { font-size: 12px; color: var(--muted); line-height: 1.45; margin: 0; }
+
+.stage { position: relative; width: 100%; aspect-ratio: 4 / 3; margin: 0 auto; border-radius: 8px; overflow: hidden; background: #0b1215; }
+.stage video, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.stage video { object-fit: cover; }
+.stage video.mirror { transform: scaleX(-1); }
+.cover {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 16px; text-align: center; color: #e6eef1;
+}
+.cover p { margin: 0; max-width: 40ch; font-size: 14px; color: #b9c8ce; }
+.hud {
+  position: absolute; left: 8px; top: 8px; display: flex; gap: 6px; flex-wrap: wrap; pointer-events: none;
+}
+.hud span { background: rgba(10, 20, 24, .78); color: #fff; font-size: 13px; padding: 2px 8px; border-radius: 4px; font-family: var(--font-num); }
+.hud .msg { font-family: var(--font-body); }
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn {
+  font: inherit; font-size: 14px; color: var(--fg); background: transparent; border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 12px; cursor: pointer; display: inline-flex; align-items: center;
+}
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 500; }
+.btn.rec { border-color: var(--bad); color: var(--bad); }
+.btn.rec[aria-pressed="true"] { background: var(--bad); color: #fff; }
+.btn:disabled { opacity: .45; cursor: default; }
+.cover .btn.primary { padding: 10px 18px; font-size: 15px; }
+.privacy { font-size: 12px; color: var(--muted); margin-left: auto; }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+ol.small { padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+.readout { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 4px 20px; align-items: end; }
+.big { font-family: var(--font-num); font-size: 52px; line-height: 1; font-weight: 500; font-variant-numeric: tabular-nums; }
+.pill { display: inline-block; font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: 99px; border: 1px solid currentColor; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); } .pill.na { color: var(--muted); }
+.bar-wrap { position: relative; }
+.bar { position: relative; height: 12px; border-radius: 6px; overflow: hidden; display: flex; margin-top: 8px; }
+.bar i { display: block; height: 100%; }
+.mark { position: absolute; top: 2px; width: 3px; height: 22px; background: var(--fg); border-radius: 2px; transform: translateX(-50%); }
+.ticks { display: flex; justify-content: space-between; font-family: var(--font-num); font-size: 11px; color: var(--muted); margin-top: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 0; border-top: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 400; color: var(--muted); padding-right: 12px; }
+td { font-family: var(--font-num); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+td.warnc { color: var(--warn); } td.okc { color: var(--ok); }
+
+.views { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.views canvas { width: 100%; display: block; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+#side { aspect-ratio: 4 / 3; }
+#chart { height: 140px; }
+
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px 20px; }
+.ctl { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ctl .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ctl output { font-family: var(--font-num); font-size: 14px; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="number"] {
+  font: inherit; font-family: var(--font-num); font-size: 14px; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; width: 90px;
+}
+details { border-top: 1px solid var(--line); padding-top: 10px; }
+summary { cursor: pointer; font-size: 14px; }
+details .controls { margin-top: 12px; }
+
+.notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.notes strong { color: var(--fg); font-weight: 500; }
+@media (max-width: 480px) { .big { font-size: 44px; } .readout { grid-template-columns: 1fr; } .privacy { margin-left: 0; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>거북목 실시간 측정</h1>
+    <p class="sub">카메라 한 대를 몸의 앞과 옆 사이(약 45°)에 두면, 자세 인식 모델이 추정한 3D 관절 위치로 가상의 측면 시점을 만들어 두개척추각(CVA)을 실시간으로 계산합니다.</p>
+  </header>
+
+  <div class="col">
+    <section class="panel" aria-label="카메라">
+      <div class="stage" id="stage">
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="ov" aria-hidden="true"></canvas>
+        <div class="hud" id="hud" hidden><span id="hudCva">–</span><span id="hudView">–</span><span class="msg" id="hudMsg" hidden></span></div>
+        <div class="cover" id="cover">
+          <button class="btn primary" id="start" type="button">카메라 켜고 측정 시작</button>
+          <p id="status">카메라 권한을 허용하면 바로 측정합니다. 영상은 이 기기 밖으로 나가지 않습니다.</p>
+        </div>
+      </div>
+      <div class="row">
+        <button class="btn" id="stop" type="button" disabled>카메라 끄기</button>
+        <button class="btn" id="flip" type="button">전면/후면 전환</button>
+        <button class="btn rec" id="rec" type="button" aria-pressed="false" disabled>● 기록 시작</button>
+        <span class="privacy">영상은 이 기기 안에서만 처리됩니다.</span>
+      </div>
+      <ol class="small">
+        <li>카메라를 삼각대나 책상에 고정하고 화면이 수평이 되게 둡니다.</li>
+        <li>카메라를 몸의 정면과 옆면 사이, 약 45° 방향에 둡니다. 머리와 양쪽 어깨가 모두 화면에 들어와야 합니다.</li>
+        <li>거리는 1.5–2.5m, 카메라 높이는 어깨와 귀 사이가 좋습니다.</li>
+        <li>오른쪽의 <b>촬영 각도</b>가 30–60° 안에 들어오는지 확인한 뒤 기록을 시작하세요.</li>
+      </ol>
+    </section>
+
+    <section class="panel" aria-label="주의 사항">
+      <ul class="notes">
+        <li><strong>카메라 한 대로 3D를 추정합니다.</strong> 깊이는 모델이 추정한 값이라 카메라 두 대를 쓴 측정보다 흔들림과 오차가 큽니다. 처음에는 정측면 사진이나 두 대 측정값과 비교해 검증하세요.</li>
+        <li><strong>C7은 직접 보이지 않습니다.</strong> 양쪽 어깨 위치에서 비율로 추정합니다. 검증용 기준값이 있으면 '기준값으로 보정'을 쓰세요.</li>
+        <li><strong>양쪽 귀의 중간점을 씁니다.</strong> 귀구슬이 옆으로 떨어져 생기는 대각선 오차를 줄이려는 방법입니다. 그래서 먼 쪽 귀가 너무 가려지는 각도(60° 이상)는 피하세요.</li>
+        <li><strong>정상 기준은 연구마다 다릅니다.</strong> 기본값은 50°이며 설정에서 바꿀 수 있습니다.</li>
+        <li><strong>선별용입니다.</strong> 편평목 같은 경추 전만 소실은 X-ray 소견이므로, 의심되면 진료를 안내하세요.</li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="col side">
+    <section class="panel" aria-label="측정 결과">
+      <div class="readout">
+        <div>
+          <div class="label">CVA (실시간)</div>
+          <div class="big" id="big">–</div>
+        </div>
+        <div aria-live="polite"><span class="pill na" id="pill">카메라 대기</span></div>
+      </div>
+      <div class="bar-wrap">
+        <div class="bar" id="bar"></div>
+        <div class="mark" id="mark" hidden></div>
+        <div class="ticks"><span>30°</span><span>40°</span><span>50°</span><span>60°</span><span>70°</span></div>
+      </div>
+      <table>
+        <tr><th>촬영 각도 (0° 측면 · 90° 정면)</th><td id="viewAng">–</td></tr>
+        <tr><th>카메라 위치</th><td id="viewSide">–</td></tr>
+        <tr><th>추정 어깨 너비</th><td id="sw">–</td></tr>
+        <tr><th>적용 중인 보정값</th><td id="offOut">0.0°</td></tr>
+      </table>
+    </section>
+
+    <section class="panel" aria-label="가상 측면 시점과 추이">
+      <div class="views">
+        <div>
+          <div class="label">가상 측면 시점 (얼굴이 오른쪽)</div>
+          <canvas id="side" role="img" aria-label="3D 추정 관절을 몸의 옆에서 본 모습"></canvas>
+        </div>
+        <div>
+          <div class="label">최근 60초 추이</div>
+          <canvas id="chart" role="img" aria-label="최근 60초 CVA 그래프"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="기록 결과" id="recPanel" hidden>
+      <div class="label">기록 결과</div>
+      <table>
+        <tr><th>기록 시간</th><td id="rDur">–</td></tr>
+        <tr><th>평균 CVA</th><td id="rMean">–</td></tr>
+        <tr><th>최저 / 최고</th><td id="rRange">–</td></tr>
+        <tr><th>정상 기준 이상인 시간</th><td id="rPct">–</td></tr>
+      </table>
+      <div class="row"><button class="btn" id="csv" type="button">CSV로 저장</button></div>
+    </section>
+
+    <section class="panel" aria-label="설정">
+      <div class="controls">
+        <div class="ctl">
+          <div class="head"><label class="label" for="roll">화면 기울기 보정</label><output id="rollOut">0°</output></div>
+          <input id="roll" type="range" min="-10" max="10" step="0.5" value="0">
+          <span class="small">영상이 시계 방향으로 기울었으면 + 쪽으로 옮기세요.</span>
+        </div>
+        <div class="ctl">
+          <div class="head"><label class="label" for="thr">정상 기준값</label></div>
+          <div class="row"><input id="thr" type="number" min="30" max="70" step="0.5" value="50"><span class="small">° 이상을 정상으로 봅니다.</span></div>
+        </div>
+      </div>
+      <details>
+        <summary>기준값으로 보정 · C7 추정 위치</summary>
+        <div class="controls">
+          <div class="ctl">
+            <label class="label" for="ref">기준 CVA (정측면 사진 등으로 잰 값)</label>
+            <div class="row">
+              <input id="ref" type="number" min="20" max="80" step="0.1" placeholder="예: 48.5">
+              <button class="btn" id="calib" type="button">지금 자세로 맞추기</button>
+              <button class="btn" id="calibReset" type="button">초기화</button>
+            </div>
+            <span class="small">같은 자세를 유지한 채 누르면 현재 값과의 차이를 보정값으로 저장합니다.</span>
+          </div>
+          <div class="ctl">
+            <div class="head"><label class="label" for="c7Back">C7 뒤쪽 거리 (어깨 너비 대비)</label><output id="c7BackOut">0.20</output></div>
+            <input id="c7Back" type="range" min="0" max="0.4" step="0.01" value="0.2">
+            <div class="head"><label class="label" for="c7Up">C7 위쪽 거리 (어깨 너비 대비)</label><output id="c7UpOut">0.10</output></div>
+            <input id="c7Up" type="range" min="-0.1" max="0.3" step="0.01" value="0.1">
+            <span class="small">양쪽 어깨 관절의 중간점에서 C7까지의 거리입니다. 기본값은 대략적인 추정치입니다.</span>
+          </div>
+        </div>
+      </details>
+    </section>
+  </div>
+</div>
+
+<script type="module">
+import { FilesetResolver, PoseLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+
+const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
+// MediaPipe Pose 지점 번호
+const NOSE = 0, L_EAR = 7, R_EAR = 8, L_SH = 11, R_SH = 12;
+
+const $ = id => document.getElementById(id);
+const video = $('video'), stage = $('stage'), ov = $('ov'), octx = ov.getContext('2d');
+const D2R = Math.PI / 180;
+const opt = { roll: 0, c7Back: 0.20, c7Up: 0.10, offset: 0, thr: 50 };
+const S = { stream: null, facing: 'user', landmarker: null, running: false, lastVT: -1, ema: null, miss: 0, last: null, hist: [], rec: null, lastUi: 0 };
+
+try { Object.assign(opt, JSON.parse(localStorage.getItem('cva-live-opt') || '{}')); opt.roll = 0; } catch (e) {}
+function save() { try { localStorage.setItem('cva-live-opt', JSON.stringify(opt)); } catch (e) {} }
+
+/* ---------- 3D 계산 ---------- */
+const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
+const mul = (a, k) => ({ x: a.x * k, y: a.y * k, z: a.z * k });
+const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const cross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+const len = a => Math.hypot(a.x, a.y, a.z);
+const unit = a => mul(a, 1 / (len(a) || 1));
+const mid = (a, b) => mul(add(a, b), 0.5);
+
+// w: worldLandmarks (m 단위, x 오른쪽 · y 아래 · z 카메라에서 멀어지는 쪽)
+function analyze(w, o) {
+  const shMid = mid(w[L_SH], w[R_SH]), earMid = mid(w[L_EAR], w[R_EAR]);
+  const sw = len(sub(w[L_SH], w[R_SH]));
+  const lat = unit(sub(w[L_SH], w[R_SH]));                 // 몸의 왼쪽
+  const r = o.roll * D2R;
+  const camUp = { x: Math.sin(r), y: -Math.cos(r), z: 0 };   // 기울기 보정한 수직 위
+  const up = unit(sub(camUp, mul(lat, dot(camUp, lat))));   // 시상면 안의 위쪽
+  let fwd = unit(cross(lat, up));
+  if (dot(sub(w[NOSE], shMid), fwd) < 0) fwd = mul(fwd, -1); // 코가 있는 쪽이 앞
+  const c7 = add(shMid, add(mul(up, o.c7Up * sw), mul(fwd, -o.c7Back * sw)));
+  const toSag = p => { const d = sub(p, c7); return { f: dot(d, fwd), u: dot(d, up) }; };
+  const ear = toSag(earMid);
+  const toCam = { x: 0, y: 0, z: -1 };
+  const a = dot(toCam, fwd), b = dot(toCam, lat);
+  return {
+    cva: Math.atan2(ear.u, ear.f) / D2R,
+    view: Math.atan2(Math.abs(a), Math.abs(b)) / D2R,
+    camSide: (b > 0 ? '왼쪽' : '오른쪽') + ' ' + (a > 0 ? '앞' : '뒤'),
+    sw, ear, sh: toSag(shMid), nose: toSag(w[NOSE])
+  };
+}
+window.__analyze = analyze;
+
+function classify(a) {
+  const t = opt.thr;
+  if (a >= t) return { t: '정상 범위', c: 'ok' };
+  if (a >= t - 5) return { t: '경도 거북목 의심', c: 'warn' };
+  if (a >= t - 10) return { t: '중등도 거북목 의심', c: 'bad' };
+  return { t: '심한 거북목 의심', c: 'bad' };
+}
+
+/* ---------- 카메라와 모델 ---------- */
+function setStatus(t) { $('status').textContent = t; }
+
+async function createLandmarker() {
+  const fs = await FilesetResolver.forVisionTasks(WASM);
+  const make = delegate => PoseLandmarker.createFromOptions(fs, {
+    baseOptions: { modelAssetPath: MODEL, delegate },
+    runningMode: 'VIDEO', numPoses: 1,
+    minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5
+  });
+  try { return await make('GPU'); } catch (e) { return await make('CPU'); }
+}
+
+async function openCamera() {
+  if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+  S.stream = await navigator.mediaDevices.getUserMedia({
+    audio: false, video: { facingMode: S.facing, width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+  video.srcObject = S.stream;
+  await video.play();
+  video.classList.toggle('mirror', S.facing === 'user');
+  S.ema = null; S.lastVT = -1;
+  fitStage();
+}
+
+function fitStage() {
+  const w = video.videoWidth || 4, h = video.videoHeight || 3, ar = (w / h).toFixed(4);
+  stage.style.aspectRatio = w + ' / ' + h;
+  stage.style.width = 'min(100%, calc(70vh * ' + ar + '))';
+  stage.style.width = 'min(100%, calc(70dvh * ' + ar + '))';
+  sizeCanvas(ov);
+}
+
+async function start() {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('카메라는 https 주소나 이 기기의 파일/localhost에서만 쓸 수 있습니다.'); return;
+  }
+  $('start').disabled = true;
+  setStatus('카메라 권한을 요청합니다…');
+  try { await openCamera(); }
+  catch (e) {
+    $('start').disabled = false;
+    setStatus(e && e.name === 'NotAllowedError'
+      ? '카메라 권한이 거부되었습니다. 브라우저 주소창의 권한 설정에서 허용한 뒤 다시 누르세요.'
+      : '카메라를 열 수 없습니다. 다른 앱이 카메라를 쓰고 있는지 확인하세요.');
+    return;
+  }
+  if (!S.landmarker) {
+    setStatus('자세 인식 모델을 불러오는 중입니다… (처음 한 번, 약 10MB)');
+    try { S.landmarker = await createLandmarker(); }
+    catch (e) { $('start').disabled = false; setStatus('모델을 불러오지 못했습니다. 인터넷 연결을 확인하세요.'); return; }
+  }
+  $('cover').hidden = true; $('hud').hidden = false;
+  $('stop').disabled = false; $('rec').disabled = false; $('start').disabled = false;
+  S.running = true;
+  requestAnimationFrame(loop);
+}
+
+function stop() {
+  S.running = false;
+  if (S.rec) toggleRec();
+  if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+  S.stream = null; video.srcObject = null; S.ema = null; S.last = null;
+  octx.clearRect(0, 0, ov.width, ov.height);
+  $('cover').hidden = false; $('hud').hidden = true;
+  $('stop').disabled = true; $('rec').disabled = true;
+  setStatus('카메라가 꺼졌습니다.');
+  updateUi(null, '');
+}
+
+/* ---------- 프레임 처리 ---------- */
+function loop() {
+  if (!S.running) return;
+  if (video.readyState >= 2 && video.currentTime !== S.lastVT) {
+    S.lastVT = video.currentTime;
+    let res = null;
+    try { res = S.landmarker.detectForVideo(video, performance.now()); } catch (e) { console.error(e); }
+    if (res) onResult(res);
+  }
+  requestAnimationFrame(loop);
+}
+
+function onResult(res) {
+  const lm = res.landmarks && res.landmarks[0], wl = res.worldLandmarks && res.worldLandmarks[0];
+  const now = performance.now();
+  let q = null, msg = '';
+  if (!lm || !wl) msg = '사람을 찾는 중';
+  else {
+    const vis = i => lm[i].visibility == null ? 1 : lm[i].visibility;
+    if (Math.max(vis(L_EAR), vis(R_EAR)) < 0.5 || Math.max(vis(L_SH), vis(R_SH)) < 0.5 || vis(NOSE) < 0.3) {
+      msg = '머리와 양쪽 어깨가 보이게 서 주세요';
+    } else {
+      q = analyze(wl, opt);
+    }
+  }
+  if (q) {
+    S.ema = S.ema == null ? q.cva : S.ema + 0.25 * (q.cva - S.ema);
+    S.miss = 0; S.last = q;
+    const v = S.ema + opt.offset;
+    S.hist.push({ t: now, v });
+    while (S.hist.length && now - S.hist[0].t > 60000) S.hist.shift();
+    if (S.rec) S.rec.samples.push({ t: (now - S.rec.t0) / 1000, v, view: q.view });
+  } else if (++S.miss > 15) { S.ema = null; S.last = null; }
+  drawOverlay(lm);
+  if (now - S.lastUi > 100) { S.lastUi = now; updateUi(S.ema == null ? null : S.last, msg); }
+}
+
+/* ---------- 그리기 ---------- */
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'; }
+function sizeCanvas(c) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  c.width = Math.max(1, Math.round(c.clientWidth * dpr)); c.height = Math.max(1, Math.round(c.clientHeight * dpr));
+}
+
+function drawOverlay(lm) {
+  const W = ov.width, H = ov.height, k = W / (ov.clientWidth || 1);
+  octx.clearRect(0, 0, W, H);
+  if (!lm) return;
+  const mirror = S.facing === 'user';
+  const P = i => ({ x: (mirror ? 1 - lm[i].x : lm[i].x) * W, y: lm[i].y * H, v: lm[i].visibility == null ? 1 : lm[i].visibility });
+  const le = P(L_EAR), re = P(R_EAR), ls = P(L_SH), rs = P(R_SH), n = P(NOSE);
+  const em = { x: (le.x + re.x) / 2, y: (le.y + re.y) / 2 }, sm = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+  octx.lineCap = 'round';
+  octx.lineWidth = 2 * k; octx.strokeStyle = 'rgba(255,255,255,.55)';
+  octx.beginPath(); octx.moveTo(ls.x, ls.y); octx.lineTo(rs.x, rs.y); octx.moveTo(le.x, le.y); octx.lineTo(re.x, re.y); octx.stroke();
+  octx.lineWidth = 3 * k; octx.strokeStyle = css('--accent');
+  octx.beginPath(); octx.moveTo(sm.x, sm.y); octx.lineTo(em.x, em.y); octx.stroke();
+  [[le, '--ear'], [re, '--ear'], [ls, '--acro'], [rs, '--acro'], [n, '--fg']].forEach(([p, v]) => {
+    octx.globalAlpha = 0.35 + 0.65 * Math.min(1, p.v);
+    octx.beginPath(); octx.arc(p.x, p.y, 7 * k, 0, Math.PI * 2);
+    octx.fillStyle = css(v); octx.fill(); octx.lineWidth = 2 * k; octx.strokeStyle = '#fff'; octx.stroke();
+  });
+  octx.globalAlpha = 1;
+  [em, sm].forEach(p => { octx.beginPath(); octx.arc(p.x, p.y, 4 * k, 0, Math.PI * 2); octx.fillStyle = '#fff'; octx.fill(); });
+}
+
+function drawSide(q) {
+  const c = $('side'), g = c.getContext('2d'), W = c.width, H = c.height, k = W / (c.clientWidth || 1);
+  g.clearRect(0, 0, W, H);
+  g.font = 13 * k + 'px "IBM Plex Sans KR", sans-serif'; g.textBaseline = 'middle';
+  if (!q) { g.fillStyle = css('--muted'); g.textAlign = 'center'; g.fillText('측정 대기', W / 2, H / 2); return; }
+  const span = Math.max(0.12, Math.hypot(q.ear.f, q.ear.u), Math.hypot(q.nose.f, q.nose.u));
+  const s = Math.min(W, H) * 0.62 / span, ox = W * 0.3, oy = H * 0.78;
+  const X = p => ox + p.f * s, Y = p => oy - p.u * s;
+  const ang = Math.atan2(q.ear.u, q.ear.f);
+  // 머리 윤곽 (귀 중심 앞쪽, 반지름 약 9cm)
+  g.globalAlpha = 0.18; g.fillStyle = css('--muted');
+  g.beginPath(); g.arc(X(q.ear) + 0.02 * s, Y(q.ear) - 0.01 * s, 0.09 * s, 0, Math.PI * 2); g.fill();
+  g.globalAlpha = 1;
+  g.setLineDash([6 * k, 5 * k]); g.lineWidth = 1.5 * k; g.strokeStyle = css('--fg');
+  g.beginPath(); g.moveTo(ox, oy); g.lineTo(W - 10 * k, oy); g.stroke(); g.setLineDash([]);
+  g.lineWidth = 3 * k; g.strokeStyle = css('--accent');
+  g.beginPath(); g.moveTo(ox, oy); g.lineTo(X(q.ear), Y(q.ear)); g.stroke();
+  g.lineWidth = 2 * k; g.strokeStyle = css('--fg');
+  g.beginPath(); g.arc(ox, oy, 34 * k, -ang, 0); g.stroke();
+  const dotAt = (p, v, label, left) => {
+    const x = X(p), y = Y(p);
+    g.beginPath(); g.arc(x, y, 6 * k, 0, Math.PI * 2); g.fillStyle = css(v); g.fill();
+    g.fillStyle = css('--fg'); g.textAlign = left ? 'right' : 'left';
+    g.fillText(label, x + (left ? -10 : 10) * k, y);
+  };
+  dotAt(q.sh, '--acro', '어깨', false);
+  dotAt(q.nose, '--fg', '코', false);
+  dotAt(q.ear, '--ear', '귀', true);
+  dotAt({ f: 0, u: 0 }, '--c7', 'C7(추정)', true);
+  g.fillStyle = css('--fg'); g.textAlign = 'left';
+  g.font = '500 ' + 13 * k + 'px "IBM Plex Mono", monospace';
+  g.fillText((ang / D2R).toFixed(1) + '°', ox + 40 * k, oy - 14 * k);
+}
+
+function drawChart() {
+  const c = $('chart'), g = c.getContext('2d'), W = c.width, H = c.height, k = W / (c.clientWidth || 1);
+  g.clearRect(0, 0, W, H);
+  const lo = 30, hi = 80, padL = 30 * k, now = performance.now();
+  const Y = v => H - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (H - 8 * k) - 4 * k;
+  const X = t => padL + (1 - (now - t) / 60000) * (W - padL - 4 * k);
+  g.font = 11 * k + 'px "IBM Plex Mono", monospace'; g.textAlign = 'right'; g.textBaseline = 'middle';
+  [[opt.thr, '--ok'], [opt.thr - 5, '--warn'], [opt.thr - 10, '--bad']].forEach(([v, col]) => {
+    g.strokeStyle = css(col); g.lineWidth = 1 * k; g.setLineDash([4 * k, 4 * k]);
+    g.beginPath(); g.moveTo(padL, Y(v)); g.lineTo(W, Y(v)); g.stroke();
+    g.fillStyle = css(col); g.fillText(v, padL - 4 * k, Y(v));
+  });
+  g.setLineDash([]);
+  if (S.hist.length < 2) return;
+  g.strokeStyle = css('--fg'); g.lineWidth = 2 * k; g.lineJoin = 'round';
+  g.beginPath();
+  S.hist.forEach((p, i) => { i ? g.lineTo(X(p.t), Y(p.v)) : g.moveTo(X(p.t), Y(p.v)); });
+  g.stroke();
+}
+
+/* ---------- 화면 갱신 ---------- */
+const fmt = v => (v == null || isNaN(v)) ? '–' : v.toFixed(1) + '°';
+function updateUi(q, msg) {
+  const pill = $('pill'), mark = $('mark');
+  const v = S.ema == null ? null : S.ema + opt.offset;
+  if (q && v != null) {
+    const c = classify(v);
+    $('big').textContent = v.toFixed(1) + '°';
+    pill.textContent = c.t; pill.className = 'pill ' + c.c;
+    mark.hidden = false; mark.style.left = (Math.max(0, Math.min(1, (v - 30) / 40)) * 100) + '%';
+    const goodView = q.view >= 30 && q.view <= 60;
+    $('viewAng').textContent = q.view.toFixed(0) + '°' + (goodView ? '' : ' (권장 30–60°)');
+    $('viewAng').className = goodView ? 'okc' : 'warnc';
+    $('viewSide').textContent = '몸의 ' + q.camSide + '쪽';
+    $('sw').textContent = (q.sw * 100).toFixed(0) + ' cm';
+    $('hudCva').textContent = 'CVA ' + v.toFixed(1) + '°';
+    $('hudView').textContent = '촬영 ' + q.view.toFixed(0) + '°';
+    $('hudView').hidden = false;
+  } else {
+    $('big').textContent = '–'; mark.hidden = true;
+    pill.textContent = S.running ? (msg || '측정 대기') : '카메라 대기'; pill.className = 'pill na';
+    $('viewAng').textContent = '–'; $('viewAng').className = ''; $('viewSide').textContent = '–'; $('sw').textContent = '–';
+    $('hudCva').textContent = 'CVA –'; $('hudView').hidden = true;
+  }
+  $('hudMsg').textContent = msg; $('hudMsg').hidden = !msg;
+  $('offOut').textContent = (opt.offset >= 0 ? '+' : '') + opt.offset.toFixed(1) + '°';
+  drawSide(S.ema == null ? null : q);
+  drawChart();
+}
+
+function buildBar() {
+  const t = opt.thr;
+  const segs = [[30, t - 10, '--bad', .85], [t - 10, t - 5, '--bad', .55], [t - 5, t, '--warn', .8], [t, 70, '--ok', .8]];
+  $('bar').innerHTML = segs.map(s => {
+    const a = Math.max(30, Math.min(70, s[0])), b = Math.max(30, Math.min(70, s[1]));
+    return '<i style="width:' + (b - a) / 40 * 100 + '%;background:var(' + s[2] + ');opacity:' + s[3] + '"></i>';
+  }).join('');
+}
+
+/* ---------- 기록 ---------- */
+function toggleRec() {
+  const b = $('rec');
+  if (!S.rec) {
+    S.rec = { t0: performance.now(), samples: [], date: new Date() };
+    b.setAttribute('aria-pressed', 'true'); b.textContent = '■ 기록 멈춤';
+  } else {
+    const r = S.rec; S.rec = null; S.done = r;
+    b.setAttribute('aria-pressed', 'false'); b.textContent = '● 기록 시작';
+    const vs = r.samples.map(s => s.v);
+    $('recPanel').hidden = false;
+    if (!vs.length) { $('rDur').textContent = '측정값 없음'; $('rMean').textContent = $('rRange').textContent = $('rPct').textContent = '–'; return; }
+    const dur = r.samples[r.samples.length - 1].t;
+    $('rDur').textContent = dur.toFixed(0) + '초 (' + vs.length + '프레임)';
+    $('rMean').textContent = fmt(vs.reduce((a, b) => a + b, 0) / vs.length);
+    $('rRange').textContent = fmt(Math.min(...vs)) + ' / ' + fmt(Math.max(...vs));
+    $('rPct').textContent = (vs.filter(v => v >= opt.thr).length / vs.length * 100).toFixed(0) + '%';
+  }
+}
+function downloadCsv() {
+  const r = S.done; if (!r) return;
+  const rows = ['time_s,cva_deg,view_deg'].concat(r.samples.map(s => s.t.toFixed(3) + ',' + s.v.toFixed(2) + ',' + s.view.toFixed(1)));
+  const url = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  const d = r.date, p = n => String(n).padStart(2, '0');
+  a.href = url; a.download = 'cva-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------- 입력 ---------- */
+function syncControls() {
+  $('roll').value = opt.roll; $('rollOut').textContent = opt.roll + '°';
+  $('c7Back').value = opt.c7Back; $('c7BackOut').textContent = (+opt.c7Back).toFixed(2);
+  $('c7Up').value = opt.c7Up; $('c7UpOut').textContent = (+opt.c7Up).toFixed(2);
+  $('thr').value = opt.thr;
+}
+$('start').addEventListener('click', start);
+$('stop').addEventListener('click', stop);
+$('flip').addEventListener('click', async () => {
+  S.facing = S.facing === 'user' ? 'environment' : 'user';
+  if (S.running) { try { await openCamera(); } catch (e) { setStatus('이 기기에서는 카메라를 바꿀 수 없습니다.'); } }
+});
+$('rec').addEventListener('click', toggleRec);
+$('csv').addEventListener('click', downloadCsv);
+$('roll').addEventListener('input', e => { opt.roll = +e.target.value; syncControls(); S.ema = null; });
+$('c7Back').addEventListener('input', e => { opt.c7Back = +e.target.value; syncControls(); S.ema = null; save(); });
+$('c7Up').addEventListener('input', e => { opt.c7Up = +e.target.value; syncControls(); S.ema = null; save(); });
+$('thr').addEventListener('change', e => {
+  const v = +e.target.value; if (!isFinite(v)) return;
+  opt.thr = Math.max(30, Math.min(70, v)); syncControls(); buildBar(); save(); updateUi(S.last, '');
+});
+$('calib').addEventListener('click', () => {
+  const ref = parseFloat($('ref').value);
+  if (!isFinite(ref)) { $('ref').focus(); return; }
+  if (S.ema == null) { $('pill').textContent = '측정 중일 때 눌러 주세요'; return; }
+  opt.offset = ref - S.ema; save(); updateUi(S.last, '');
+});
+$('calibReset').addEventListener('click', () => { opt.offset = 0; save(); updateUi(S.last, ''); });
+
+new ResizeObserver(() => { sizeCanvas(ov); sizeCanvas($('side')); sizeCanvas($('chart')); updateUi(S.last, ''); })
+  .observe(document.body);
+video.addEventListener('resize', fitStage);
+try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => updateUi(S.last, '')); } catch (e) {}
+if (document.fonts) document.fonts.ready.then(() => updateUi(S.last, ''));
+
+syncControls(); buildBar(); updateUi(null, '');
+</script>
+</body>
+</html>
